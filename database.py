@@ -235,5 +235,18 @@ def get_analytics():
     }
 
 
+
+
+def clear_all_records():
+    """Delete ALL screenings and patients. Returns count of deleted records."""
+    conn = get_db()
+    s_count = conn.execute("SELECT COUNT(*) FROM screenings").fetchone()[0]
+    p_count = conn.execute("SELECT COUNT(*) FROM patients").fetchone()[0]
+    conn.execute("DELETE FROM screenings")
+    conn.execute("DELETE FROM patients")
+    conn.commit()
+    conn.close()
+    return s_count, p_count
+
 # Initialize on import
 init_db()

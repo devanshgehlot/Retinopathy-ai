@@ -12,7 +12,7 @@ import os, io, uuid
 from database import (
     add_patient, get_all_patients, get_patient, update_patient, delete_patient,
     add_screening, get_screening, get_patient_screenings, get_all_screenings,
-    get_analytics, init_db
+    get_analytics, init_db, clear_all_records
 )
 from model import dr_model, SEVERITY_LABELS, SEVERITY_COLORS, SEVERITY_DESCRIPTIONS
 
@@ -119,6 +119,26 @@ with st.sidebar:
     )
     st.divider()
     st.caption("⚠️ For screening assistance only.\nNot a diagnostic tool.")
+
+    st.divider()
+    if st.button("🗑️ Clear All Records", use_container_width=True, type="secondary"):
+        st.session_state["_confirm_clear"] = True
+    if st.session_state.get("_confirm_clear"):
+        st.warning("This will delete ALL screenings & patients!")
+        c1, c2 = st.columns(2)
+        if c1.button("✅ Yes, clear", use_container_width=True):
+            s, p = clear_all_records()
+            # Also clear uploaded files
+            import glob
+            for f in glob.glob(os.path.join(UPLOAD_DIR, "*")):
+                os.remove(f)
+            st.session_state.pop("_confirm_clear", None)
+            st.session_state.pop("recent_batch", None)
+            st.success(f"Cleared {s} screenings & {p} patients!")
+            st.rerun()
+        if c2.button("❌ Cancel", use_container_width=True):
+            st.session_state.pop("_confirm_clear", None)
+            st.rerun()
 
 
 # ═══════════════════════════
@@ -728,7 +748,126 @@ if st.session_state.get("_nav") == "report" and "view_report_id" in st.session_s
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("← Back to Screening"):
-            del st.session_state["_nav"]
-            del st.session_state["view_report_id"]
-            st.rerun()
+        # ── PDF Download ──
+        def generate_pdf(screening):
+            from io import BytesIO
+            try:
+                from reportlab.lib.pagesizes import A4
+                from reportlab.lib.units import mm
+                from reportlab.lib.colors import HexColor
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib.enums import TA_CENTER, TA_LEFT
+
+                buf = BytesIO()
+                doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20*mm, bottomMargin=20*mm, leftMargin=15*mm, rightMargin=15*mm)
+                styles = getSampleStyleSheet()
+                story = []
+
+                # Title
+                title_style = ParagraphStyle("Title", parent=styles["Title"], fontSize=18, textColor=HexColor("#1a1f35"), spaceAfter=4)
+                story.append(Paragraph("👁️ DR Screen — Screening Report", title_style))
+                story.append(Paragraph(f"Report ID: DR-{screening['id']}  |  Date: {str(screening['created_at'])[:19]}", styles["Normal"]))
+                story.append(Spacer(1, 8*mm))
+
+                # Patient info
+                story.append(Paragraph("<b>Patient Information</b>", styles["Heading2"]))
+                pt_data = [
+                    ["Name", screening.get("patient_name") or "Not linked"],
+                    ["Age / Gender", f"{screening.get('patient_age', 'N/A')} / {screening.get('patient_gender', 'N/A')}"],
+                    ["Contact", screening.get("patient_contact") or "N/A"],
+                    ["DM Duration", f"{screening.get('diabetes_duration', 'N/A')} yrs"],
+                ]
+                pt_table = Table(pt_data, colWidths=[45*mm, 120*mm])
+                pt_table.setStyle(TableStyle([
+                    ("BACKGROUND", (0,0), (0,-1), HexColor("#f0f4f8")),
+                    ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
+                    ("GRID", (0,0), (-1,-1), 0.5, HexColor("#cbd5e1")),
+                    ("PADDING", (0,0), (-1,-1), 6),
+                ]))
+                story.append(pt_table)
+                story.append(Spacer(1, 6*mm))
+
+                # Result
+                sev = screening["severity"]
+                label = screening["label"]
+                conf = screening["confidence"] * 100
+                story.append(Paragraph("<b>Screening Result</b>", styles["Heading2"]))
+                result_text = f"{'No DR Detected' if sev == 0 else 'DR DETECTED'}  —  Grade {sev}: {label}  —  Confidence: {conf:.1f}%"
+                result_style = ParagraphStyle("Result", parent=styles["Normal"], fontSize=13,
+                    textColor=HexColor("#2cc985" if sev == 0 else "#ff4757"), spaceAfter=4)
+                story.append(Paragraph(result_text, result_style))
+                story.append(Spacer(1, 4*mm))
+
+                # Probabilities
+                story.append(Paragraph("<b>Probability Breakdown</b>", styles["Heading3"]))
+                prob_labels = ["No DR", "Mild NPDR", "Moderate NPDR", "Severe NPDR", "Proliferative DR"]
+                prob_data = [["Grade", "Probability"]]
+                for i, p in enumerate(screening["probabilities"]):
+                    prob_data.append([prob_labels[i], f"{p*100:.1f}%"])
+                prob_table = Table(prob_data, colWidths=[60*mm, 40*mm])
+                prob_table.setStyle(TableStyle([
+                    ("BACKGROUND", (0,0), (-1,0), HexColor("#1e293b")),
+                    ("TEXTCOLOR", (0,0), (-1,0), HexColor("#ffffff")),
+                    ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+                    ("GRID", (0,0), (-1,-1), 0.5, HexColor("#cbd5e1")),
+                    ("PADDING", (0,0), (-1,-1), 6),
+                    ("BACKGROUND", (0, sev+1), (-1, sev+1), HexColor("#e0f2fe")),
+                ]))
+                story.append(prob_table)
+                story.append(Spacer(1, 6*mm))
+
+                # Clinical recommendation
+                story.append(Paragraph("<b>Clinical Recommendation</b>", styles["Heading2"]))
+                story.append(Paragraph(SEVERITY_DESCRIPTIONS[sev], styles["Normal"]))
+                story.append(Spacer(1, 4*mm))
+
+                # Doctor notes
+                if screening.get("doctor_notes"):
+                    story.append(Paragraph("<b>Doctor's Notes</b>", styles["Heading2"]))
+                    story.append(Paragraph(screening["doctor_notes"], styles["Normal"]))
+                    story.append(Spacer(1, 4*mm))
+
+                # Retinal image
+                img_file = os.path.join(UPLOAD_DIR, screening["image_path"])
+                if os.path.exists(img_file):
+                    story.append(Paragraph("<b>Retinal Image</b>", styles["Heading2"]))
+                    story.append(RLImage(img_file, width=80*mm, height=80*mm))
+                    story.append(Spacer(1, 4*mm))
+
+                # Heatmap
+                hm_file = os.path.join(UPLOAD_DIR, f"heatmap_{screening['image_path']}")
+                if os.path.exists(hm_file):
+                    story.append(Paragraph("<b>Grad-CAM Heatmap</b>", styles["Heading2"]))
+                    story.append(RLImage(hm_file, width=80*mm, height=80*mm))
+                    story.append(Spacer(1, 6*mm))
+
+                # Disclaimer
+                disc_style = ParagraphStyle("Disc", parent=styles["Normal"], fontSize=9, textColor=HexColor("#94a3b8"))
+                story.append(Paragraph("⚠️ DISCLAIMER: This report is generated by an AI-assisted screening tool for screening purposes only. "
+                    "It does not constitute a medical diagnosis. All results must be reviewed by a qualified ophthalmologist.", disc_style))
+
+                doc.build(story)
+                return buf.getvalue()
+            except ImportError:
+                return None
+
+        pdf_col, back_col = st.columns(2)
+        with pdf_col:
+            pdf_bytes = generate_pdf(s)
+            if pdf_bytes:
+                st.download_button(
+                    "📥 Download PDF Report",
+                    data=pdf_bytes,
+                    file_name=f"DR_Report_{s['id']}_{str(s['created_at'])[:10]}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    type="primary"
+                )
+            else:
+                st.warning("Install `reportlab` for PDF: `pip3 install reportlab`")
+        with back_col:
+            if st.button("← Back to Screening", use_container_width=True):
+                del st.session_state["_nav"]
+                del st.session_state["view_report_id"]
+                st.rerun()
