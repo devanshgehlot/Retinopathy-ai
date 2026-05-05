@@ -242,14 +242,14 @@ Retinopathy-ai/
 ### Main Dashboard
 ![Dashboard](demo_images/dashboard.png)
 
-### DR Detection Result
-![Detection Result](demo_images/prediction_result.png)
-
 ### Grad-CAM Heatmap
-![Heatmap](heatmap/sample_heatmap.png)
+![Heatmap](demo_images/heatmap.png)
 
-### PDF Report
-![PDF Report](demo_images/pdf_report.png)
+### Model Matrix
+![Model Matrix](demo_images/model-matrix.png)
+
+### Model Configuration
+!Model Configuration](demo_images/model-configuration)
 
 ---
 
