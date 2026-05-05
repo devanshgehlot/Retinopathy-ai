@@ -10,3 +10,7 @@ scikit-learn
 grad-cam
 albumentations
 matplotlib
+streamlit
+plotly 
+scipy
+Sqllite3
