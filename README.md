@@ -245,12 +245,6 @@ Retinopathy-ai/
 ### Grad-CAM Heatmap
 ![Heatmap](demo_images/heatmap.png)
 
-### Model Matrix
-![Model Matrix](demo_images/model-matrix.png)
-
-### Model Configuration
-!Model Configuration](demo_images/model-configuration)
-
 ---
 
 ## 🔮 Future Enhancements
